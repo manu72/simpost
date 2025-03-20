@@ -73,6 +73,7 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
   "facebook_page_id": "your-facebook-page-id",
   "max_articles": 10,
   "auto_post": true,
+  "delay_each_post": 10,
   "system_prompt": "System prompt for the AI model",
   "prompt": "Specific instructions for rewriting articles"
 }
@@ -80,6 +81,7 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
 
 - `max_articles`: Maximum number of articles to retrieve from the feed (default: 10)
 - `auto_post`: Whether to automatically post verified articles (default: true)
+- `delay_each_post`: Number of seconds to wait between posting articles (default: 10)
 
 ## Project Structure
 
