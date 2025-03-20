@@ -1,5 +1,6 @@
 # Environment variables
 .env
+feeds.json
 
 # Python
 __pycache__/
@@ -30,6 +31,8 @@ ENV/
 # Logs and outputs
 *.log
 output/
+data/
+logs/
 
 # IDE specific files
 .idea/
@@ -37,7 +40,6 @@ output/
 *.swp
 *.swo 
 /CLAUDE.md
-/data
-/logs
+
 /test_migration_guide.md
 /testing_recommendations.md

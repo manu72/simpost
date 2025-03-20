@@ -57,17 +57,134 @@ def is_article_processed(feed_name, article_id):
     rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
     return os.path.exists(rewritten_file)
 
-# Function to fetch latest article from RSS Feed
-def get_latest_article(feed_url):
+# Function to parse an individual article item from RSS/Atom feed
+def parse_article_item(item, namespaces):
+    """Parse a single RSS/Atom item into an article dictionary."""
+    # Extract title (works for both RSS and Atom)
+    title_elem = item.find('.//title')
+    if title_elem is None:
+        title_elem = item.find('.//{http://www.w3.org/2005/Atom}title')
+    title = title_elem.text if title_elem is not None else "No title found"
+
+    # Extract link (RSS vs Atom formats differ)
+    link_elem = item.find('.//link')
+    link = None
+    if link_elem is not None:
+        if link_elem.text:  # RSS format
+            link = link_elem.text
+        else:  # Might be Atom format
+            link = link_elem.get('href')
+
+    # If still no link, try other formats
+    if not link:
+        # Try to find enclosure URL
+        enclosure = item.find('.//enclosure')
+        if enclosure is not None:
+            link = enclosure.get('url')
+
+    # First try to get the full content from content:encoded
+    content = ""
+    
+    # Try different namespace patterns for content:encoded
+    content_encoded_elem = None
+    for xpath in [
+        './/content:encoded',
+        './/{http://purl.org/rss/1.0/modules/content/}encoded',
+        './/content:encoded',
+        './/encoded'
+    ]:
+        try:
+            content_encoded_elem = item.find(xpath, namespaces)
+            if content_encoded_elem is not None and content_encoded_elem.text:
+                content = content_encoded_elem.text
+                break
+        except Exception:
+            continue
+    
+    # If content:encoded not found or empty, fall back to description
+    if not content or content.strip() == "":
+        # Extract description/summary
+        desc_elem = item.find('.//description')
+        if desc_elem is None:
+            desc_elem = item.find('.//summary')
+        if desc_elem is None:
+            desc_elem = item.find('.//{http://www.w3.org/2005/Atom}summary')
+        if desc_elem is None:
+            desc_elem = item.find('.//{http://www.w3.org/2005/Atom}content')
+
+        description = desc_elem.text if desc_elem is not None else ""
+
+        # If CDATA content
+        if description and description.strip() == "" and desc_elem is not None:
+            # Try to get CDATA content
+            if len(desc_elem) > 0:  # Has child elements
+                description = ET.tostring(desc_elem, encoding='unicode')
+                # Remove the outer tags
+                start_tag = description.find('>') + 1
+                end_tag = description.rfind('</')
+                if start_tag > 0 and end_tag > start_tag:
+                    description = description[start_tag:end_tag]
+        
+        content = description
+
+    # Extract publication date
+    pub_date_elem = item.find('.//pubDate')
+    if pub_date_elem is None:
+        pub_date_elem = item.find('.//{http://www.w3.org/2005/Atom}published')
+    pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now().isoformat()
+
+    # Extract guid/id
+    guid_elem = item.find('.//guid')
+    guid = guid_elem.text if guid_elem is not None else None
+
+    # Extract author/creator
+    creator_elem = item.find('.//dc:creator', namespaces) or item.find('.//{http://purl.org/dc/elements/1.1/}creator')
+    creator = creator_elem.text if creator_elem is not None else None
+
+    # Extract media:thumbnail if available
+    thumbnail_elem = item.find('.//media:thumbnail', namespaces) or item.find('.//{http://search.yahoo.com/mrss/}thumbnail')
+    thumbnail_url = thumbnail_elem.get('url') if thumbnail_elem is not None else None
+
+    article = {
+        "title": title,
+        "description": content[:500] + "..." if len(content) > 500 else content,  # First 500 chars as description
+        "content": content,  # Full content
+        "link": link,
+        "pub_date": pub_date,
+        "retrieved_at": datetime.datetime.now().isoformat(),
+        "guid": guid,
+        "creator": creator,
+        "thumbnail_url": thumbnail_url
+    }
+
+    # Create a unique ID for the article
+    article_id = create_article_id(title, link)
+    article["id"] = article_id
+
+    return article
+
+
+# Function to fetch articles from RSS Feed
+def get_articles(feed_url, max_articles=10):
+    """
+    Retrieve articles from an RSS or Atom feed.
+    
+    Args:
+        feed_url (str): URL of the RSS/Atom feed
+        max_articles (int): Maximum number of articles to retrieve (default: 10)
+        
+    Returns:
+        list: List of article dictionaries or empty list if no articles found
+    """
     try:
         response = requests.get(feed_url, timeout=30)
         if response.status_code != 200:
             print(f"⚠️ Failed to fetch feed: {feed_url} (Status code: {response.status_code})")
-            return None
+            return []
 
         # Debug: Print raw XML content
         print("\n=== Raw XML Content ===")
-        print(response.content.decode('utf-8')[:2000] + "...")  # First 1000 chars
+        print(response.content.decode('utf-8')[:2000] + "...")  # First 2000 chars
         
         # Parse XML content
         try:
@@ -105,139 +222,43 @@ def get_latest_article(feed_url):
 
             if not items:
                 print(f"⚠️ No articles found in {feed_url}")
-                return None
+                return []
 
-            print(f"\n=== Found {len(items)} items ===")
+            total_items = len(items)
+            print(f"\n=== Found {total_items} items ===")
             
-            # Get the first item/entry (latest article)
-            latest = items[0]
+            # Limit the number of articles to process
+            items_to_process = items[:max_articles] if max_articles > 0 else items
+            print(f"Processing {len(items_to_process)} of {total_items} articles")
             
-            # Debug: Print the first item's XML
-            print("\n=== Latest Item XML ===")
-            print(ET.tostring(latest, encoding='unicode', method='xml'))
-
-            # Extract title (works for both RSS and Atom)
-            title_elem = latest.find('.//title')
-            if title_elem is None:
-                title_elem = latest.find('.//{http://www.w3.org/2005/Atom}title')
-            title = title_elem.text if title_elem is not None else "No title found"
-            print(f"\nTitle: {title}")
-
-            # Extract link (RSS vs Atom formats differ)
-            link_elem = latest.find('.//link')
-            link = None
-            if link_elem is not None:
-                if link_elem.text:  # RSS format
-                    link = link_elem.text
-                else:  # Might be Atom format
-                    link = link_elem.get('href')
-
-            # If still no link, try other formats
-            if not link:
-                # Try to find enclosure URL
-                enclosure = latest.find('.//enclosure')
-                if enclosure is not None:
-                    link = enclosure.get('url')
-            print(f"Link: {link}")
-
-            # First try to get the full content from content:encoded
-            content = ""
-            
-            # Try different namespace patterns for content:encoded
-            content_encoded_elem = None
-            for xpath in [
-                './/content:encoded',
-                './/{http://purl.org/rss/1.0/modules/content/}encoded',
-                './/content:encoded',
-                './/encoded'
-            ]:
+            # Process each item
+            articles = []
+            for i, item in enumerate(items_to_process):
                 try:
-                    content_encoded_elem = latest.find(xpath, namespaces)
-                    if content_encoded_elem is not None and content_encoded_elem.text:
-                        content = content_encoded_elem.text
-                        print(f"\nFound content using xpath: {xpath}")
-                        break
+                    print(f"\n--- Processing article {i+1}/{len(items_to_process)} ---")
+                    article = parse_article_item(item, namespaces)
+                    if article["title"] and article["link"]:  # Ensure we have at least title and link
+                        articles.append(article)
+                    else:
+                        print(f"⚠️ Skipping article with missing title or link: {article.get('title', 'No title')}")
                 except Exception as e:
-                    print(f"XPath {xpath} failed: {str(e)}")
+                    print(f"⚠️ Error parsing article: {str(e)}")
                     continue
             
-            # If content:encoded not found or empty, fall back to description
-            if not content or content.strip() == "":
-                print("\nFalling back to description...")
-                # Extract description/summary
-                desc_elem = latest.find('.//description')
-                if desc_elem is None:
-                    desc_elem = latest.find('.//summary')
-                if desc_elem is None:
-                    desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}summary')
-                if desc_elem is None:
-                    desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}content')
-
-                description = desc_elem.text if desc_elem is not None else ""
-                print(f"Description found: {bool(description)}")
-
-                # If CDATA content
-                if description and description.strip() == "" and desc_elem is not None:
-                    # Try to get CDATA content
-                    if len(desc_elem) > 0:  # Has child elements
-                        description = ET.tostring(desc_elem, encoding='unicode')
-                        # Remove the outer tags
-                        start_tag = description.find('>') + 1
-                        end_tag = description.rfind('</')
-                        if start_tag > 0 and end_tag > start_tag:
-                            description = description[start_tag:end_tag]
-                
-                content = description
-
-            print(f"\nFinal content length: {len(content)}")
-
-            # Extract publication date
-            pub_date_elem = latest.find('.//pubDate')
-            if pub_date_elem is None:
-                pub_date_elem = latest.find('.//{http://www.w3.org/2005/Atom}published')
-            pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now().isoformat()
-
-            # Extract guid/id
-            guid_elem = latest.find('.//guid')
-            guid = guid_elem.text if guid_elem is not None else None
-
-            # Extract author/creator
-            creator_elem = latest.find('.//dc:creator', namespaces) or latest.find('.//{http://purl.org/dc/elements/1.1/}creator')
-            creator = creator_elem.text if creator_elem is not None else None
-
-            # Extract media:thumbnail if available
-            thumbnail_elem = latest.find('.//media:thumbnail', namespaces) or latest.find('.//{http://search.yahoo.com/mrss/}thumbnail')
-            thumbnail_url = thumbnail_elem.get('url') if thumbnail_elem is not None else None
-
-            article = {
-                "title": title,
-                "description": content[:500] + "..." if len(content) > 500 else content,  # First 500 chars as description
-                "content": content,  # Full content
-                "link": link,
-                "pub_date": pub_date,
-                "retrieved_at": datetime.datetime.now().isoformat(),
-                "guid": guid,
-                "creator": creator,
-                "thumbnail_url": thumbnail_url
-            }
-
-            # Create a unique ID for the article
-            article_id = create_article_id(title, link)
-            article["id"] = article_id
-
-            return article
+            print(f"Successfully parsed {len(articles)} articles")
+            return articles
 
         except ET.ParseError as e:
             print(f"⚠️ Error parsing XML from {feed_url}: {str(e)}")
             print("Raw content that failed to parse:")
             print(response.content.decode('utf-8'))
-            return None
+            return []
 
     except Exception as e:
         print(f"⚠️ Error fetching feed {feed_url}: {str(e)}")
         import traceback
         traceback.print_exc()
-        return None
+        return []
 
 # Function to save retrieved article
 def save_retrieved_article(feed_name, article):
@@ -366,63 +387,73 @@ def main():
 
         print(f"📢 Processing feed: {feed['name']} ({feed['rss_url']})")
         
-        # Get the latest article
-        article = get_latest_article(feed["rss_url"])
-        if not article:
-            print(f"⚠️ Could not retrieve article from {feed['name']}")
+        # Get max articles from the feed settings or default to 10
+        max_articles = feed.get("max_articles", 10)
+        print(f"📊 Max articles to retrieve: {max_articles}")
+        
+        # Get articles from the feed
+        articles = get_articles(feed["rss_url"], max_articles)
+        if not articles:
+            print(f"⚠️ Could not retrieve any articles from {feed['name']}")
             continue
+            
+        print(f"📚 Retrieved {len(articles)} articles from {feed['name']}")
         
-        # Check if we've already processed this article
-        if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
-            print(f"⏭️ Skipping already processed article: {article['title']}")
-            continue
-        
-        # Save the retrieved article
-        retrieved_path = save_retrieved_article(feed['name'].replace(' ', '_'), article)
-        print(f"💾 Saved retrieved article to {retrieved_path}")
-
-        # Rewrite the article
-        print(f"📝 Rewriting article: {article['title']}")
-        # Use feed-specific system prompt or default to a generic one if not provided
-        system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
-        rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
-        log_rewritten_article(feed["name"], rewritten_content)
-
-        # Verify the rewritten content
-        print(f"🔍 Verifying article content...")
-        is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"])
-        
-        # Save the rewritten article
-        rewritten_path = save_rewritten_article(
-            feed['name'].replace(' ', '_'), 
-            article['id'], 
-            article, 
-            rewritten_content, 
-            is_verified, 
-            verification_message
-        )
-        print(f"💾 Saved rewritten article to {rewritten_path}")
-
-        # Display results
-        print("\n" + "="*50)
-        print(f"📋 Generated content for {feed['name']}:")
-        print("-"*50)
-        print(rewritten_content)
-        print("-"*50)
-
-        if is_verified:
-            print(f"✅ VERIFIED: {verification_message}")
-            if feed.get("facebook_page_id"):
-                if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
-                    # Mark the article as posted
-                    mark_article_as_posted(feed['name'].replace(' ', '_'), article['id'])
+        # Process each article
+        for article in articles:
+            print(f"\n🔄 Processing article: {article['title']}")
+            
+            # Check if we've already processed this article
+            if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
+                print(f"⏭️ Skipping already processed article: {article['title']}")
+                continue
+            
+            # Save the retrieved article
+            retrieved_path = save_retrieved_article(feed['name'].replace(' ', '_'), article)
+            print(f"💾 Saved retrieved article to {retrieved_path}")
+    
+            # Rewrite the article
+            print(f"📝 Rewriting article: {article['title']}")
+            # Use feed-specific system prompt or default to a generic one if not provided
+            system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
+            rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
+            log_rewritten_article(feed["name"], rewritten_content)
+    
+            # Verify the rewritten content
+            print(f"🔍 Verifying article content...")
+            is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"])
+            
+            # Save the rewritten article
+            rewritten_path = save_rewritten_article(
+                feed['name'].replace(' ', '_'), 
+                article['id'], 
+                article, 
+                rewritten_content, 
+                is_verified, 
+                verification_message
+            )
+            print(f"💾 Saved rewritten article to {rewritten_path}")
+    
+            # Display results
+            print("\n" + "="*50)
+            print(f"📋 Generated content for {feed['name']}: {article['title']}")
+            print("-"*50)
+            print(rewritten_content)
+            print("-"*50)
+    
+            if is_verified:
+                print(f"✅ VERIFIED: {verification_message}")
+                if feed.get("facebook_page_id") and feed.get("auto_post", True):
+                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
+                        # Mark the article as posted
+                        mark_article_as_posted(feed['name'].replace(' ', '_'), article['id'])
+                else:
+                    print("ℹ️ No Facebook page ID provided or auto-posting disabled, skipping posting")
             else:
-                print("ℹ️ No Facebook page ID provided, skipping posting")
-        else:
-            print(f"❌ NOT VERIFIED: {verification_message}")
-            print("⚠️ Content was not published due to verification failure")
-
-        print("="*50 + "\n")
+                print(f"❌ NOT VERIFIED: {verification_message}")
+                print("⚠️ Content was not published due to verification failure")
+    
+            print("="*50 + "\n")
 
 # Main script to process all feeds
 if __name__ == "__main__":
