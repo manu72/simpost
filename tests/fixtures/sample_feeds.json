@@ -3,14 +3,20 @@
     "name": "Test Feed",
     "rss_url": "https://example.com/rss",
     "prompt": "Rewrite this article as a concise social media post for Facebook.",
+    "system_prompt": "You are a professional social media copywriter specializing in news and current events.",
     "facebook_page_id": "123456789",
+    "max_articles": 10,
+    "auto_post": true,
     "active": true
   },
   {
     "name": "Inactive Feed",
     "rss_url": "https://example.com/inactive",
     "prompt": "Rewrite this article for Twitter.",
+    "system_prompt": "You are a professional social media copywriter specializing in short-form content.",
     "facebook_page_id": "987654321",
+    "max_articles": 5,
+    "auto_post": false,
     "active": false
   }
 ]
