@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Test Feed",
+    "rss_url": "https://example.com/rss",
+    "prompt": "Rewrite this article as a concise social media post for Facebook.",
+    "facebook_page_id": "123456789",
+    "active": true
+  },
+  {
+    "name": "Inactive Feed",
+    "rss_url": "https://example.com/inactive",
+    "prompt": "Rewrite this article for Twitter.",
+    "facebook_page_id": "987654321",
+    "active": false
+  }
+]

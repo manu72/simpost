@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample RSS Feed</title>
+    <link>https://example.com</link>
+    <description>A sample RSS feed for testing</description>
+    <item>
+      <title>Sample Article Title</title>
+      <link>https://example.com/sample-article</link>
+      <description>This is a description of the sample article for testing purposes. This content will be used to test the article processing functionality.</description>
+      <pubDate>Mon, 20 Mar 2025 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Second Sample Article</title>
+      <link>https://example.com/second-article</link>
+      <description>This is a description of the second sample article.</description>
+      <pubDate>Sun, 19 Mar 2025 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
