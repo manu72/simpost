@@ -36,3 +36,5 @@ output/
 .vscode/
 *.swp
 *.swo 
+/CLAUDE.md
+/data
