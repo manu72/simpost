@@ -20,3 +20,17 @@ Max Verstappen's future with Red Bull is generating buzz once again. As the F1 w
 
 ---
 
+## Red Bull F1 - New Post (2025-03-20 17:51:26)
+
+Red Bull's driver lineup decisions have sparked intrigue and debate in the Formula 1 world. Liam Lawson currently holds the seat in the Red Bull RB21, while Yuki Tsunoda races for Racing Bulls. This choice has left many, including former Aston Martin strategist and Sky F1 analyst Bernie Collins, wondering if it will remain unchanged throughout the season.
+
+Last year, Red Bull chose to promote Lawson over Tsunoda after deciding to part ways with Sergio Perez. Despite Tsunoda outperforming Daniel Ricciardo and Lawson in their races together, Red Bull saw greater potential in Lawson. However, the season opener in Australia saw Tsunoda outperforming Lawson, qualifying fifth despite a strategic error from the team that left him outside the points. Lawson, on the other hand, faced challenges, failing to advance past Q1 and crashing out of the race.
+
+Collins questions Red Bull's decision, noting Tsunoda's improvement in composure and performance. She acknowledges that while fans see the on-track results, the internal dynamics and contributions during engineering debriefs remain unseen. Tsunoda himself expressed frustration over the decision, admitting he doesn't fully understand why he was passed over, especially after proving himself against Ricciardo.
+
+Tsunoda is now focused on his future, aiming to become a more complete driver. Collins advises that maintaining strong performances will be key for him, particularly if he continues to out-qualify his Red Bull counterpart. This ongoing saga promises to keep fans and analysts alike watching closely as the season progresses.
+
+#F1 #Formula1 #GrandPrix #RedBullF1
+
+---
+

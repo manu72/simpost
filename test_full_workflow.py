@@ -51,7 +51,7 @@ def main():
     # Step 2: Rewrite the article
     print("\n🖋️ Step 2: Rewriting article with OpenAI...")
     try:
-        rewritten_content = rewrite_article(article, feed["prompt"])
+        rewritten_content = rewrite_article(article, feed["prompt"], feed["system_prompt"])
         
         print("✅ Successfully rewrote article")
         print("\n   === Rewritten content ===")

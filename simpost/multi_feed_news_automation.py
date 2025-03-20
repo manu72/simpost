@@ -65,9 +65,37 @@ def get_latest_article(feed_url):
             print(f"⚠️ Failed to fetch feed: {feed_url} (Status code: {response.status_code})")
             return None
 
+        # Debug: Print raw XML content
+        print("\n=== Raw XML Content ===")
+        print(response.content.decode('utf-8')[:2000] + "...")  # First 1000 chars
+        
         # Parse XML content
         try:
+            # Parse root first to inspect namespaces
             root = ET.fromstring(response.content)
+            
+            # Debug: Print actual namespaces from the XML
+            print("\n=== XML Namespaces ===")
+            for prefix, uri in root.nsmap.items() if hasattr(root, 'nsmap') else []:
+                print(f"Prefix: {prefix}, URI: {uri}")
+            
+            # Extract namespaces from root element attributes
+            namespaces = {}
+            for key, value in root.attrib.items():
+                if key.startswith('xmlns:'):
+                    prefix = key.split(':')[1]
+                    namespaces[prefix] = value
+            
+            print("\n=== Extracted Namespaces ===")
+            print(namespaces)
+            
+            # Register common namespaces plus any found in the document
+            namespaces.update({
+                'content': 'http://purl.org/rss/1.0/modules/content/',
+                'atom': 'http://www.w3.org/2005/Atom',
+                'dc': 'http://purl.org/dc/elements/1.1/',
+                'media': 'http://search.yahoo.com/mrss/'
+            })
 
             # Try to find items in RSS format
             items = root.findall('.//item')
@@ -79,14 +107,21 @@ def get_latest_article(feed_url):
                 print(f"⚠️ No articles found in {feed_url}")
                 return None
 
+            print(f"\n=== Found {len(items)} items ===")
+            
             # Get the first item/entry (latest article)
             latest = items[0]
+            
+            # Debug: Print the first item's XML
+            print("\n=== Latest Item XML ===")
+            print(ET.tostring(latest, encoding='unicode', method='xml'))
 
             # Extract title (works for both RSS and Atom)
             title_elem = latest.find('.//title')
             if title_elem is None:
                 title_elem = latest.find('.//{http://www.w3.org/2005/Atom}title')
             title = title_elem.text if title_elem is not None else "No title found"
+            print(f"\nTitle: {title}")
 
             # Extract link (RSS vs Atom formats differ)
             link_elem = latest.find('.//link')
@@ -103,34 +138,58 @@ def get_latest_article(feed_url):
                 enclosure = latest.find('.//enclosure')
                 if enclosure is not None:
                     link = enclosure.get('url')
+            print(f"Link: {link}")
 
-            # Extract description/summary
-            desc_elem = latest.find('.//description')
-            if desc_elem is None:
-                desc_elem = latest.find('.//summary')
-            if desc_elem is None:
-                desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}summary')
-            if desc_elem is None:
-                desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}content')
+            # First try to get the full content from content:encoded
+            content = ""
+            
+            # Try different namespace patterns for content:encoded
+            content_encoded_elem = None
+            for xpath in [
+                './/content:encoded',
+                './/{http://purl.org/rss/1.0/modules/content/}encoded',
+                './/content:encoded',
+                './/encoded'
+            ]:
+                try:
+                    content_encoded_elem = latest.find(xpath, namespaces)
+                    if content_encoded_elem is not None and content_encoded_elem.text:
+                        content = content_encoded_elem.text
+                        print(f"\nFound content using xpath: {xpath}")
+                        break
+                except Exception as e:
+                    print(f"XPath {xpath} failed: {str(e)}")
+                    continue
+            
+            # If content:encoded not found or empty, fall back to description
+            if not content or content.strip() == "":
+                print("\nFalling back to description...")
+                # Extract description/summary
+                desc_elem = latest.find('.//description')
+                if desc_elem is None:
+                    desc_elem = latest.find('.//summary')
+                if desc_elem is None:
+                    desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}summary')
+                if desc_elem is None:
+                    desc_elem = latest.find('.//{http://www.w3.org/2005/Atom}content')
 
-            description = desc_elem.text if desc_elem is not None else ""
+                description = desc_elem.text if desc_elem is not None else ""
+                print(f"Description found: {bool(description)}")
 
-            # If CDATA content
-            if description and description.strip() == "" and desc_elem is not None:
-                # Try to get CDATA content
-                if len(desc_elem) > 0:  # Has child elements
-                    description = ET.tostring(desc_elem, encoding='unicode')
-                    # Remove the outer tags
-                    start_tag = description.find('>') + 1
-                    end_tag = description.rfind('</')
-                    if start_tag > 0 and end_tag > start_tag:
-                        description = description[start_tag:end_tag]
+                # If CDATA content
+                if description and description.strip() == "" and desc_elem is not None:
+                    # Try to get CDATA content
+                    if len(desc_elem) > 0:  # Has child elements
+                        description = ET.tostring(desc_elem, encoding='unicode')
+                        # Remove the outer tags
+                        start_tag = description.find('>') + 1
+                        end_tag = description.rfind('</')
+                        if start_tag > 0 and end_tag > start_tag:
+                            description = description[start_tag:end_tag]
+                
+                content = description
 
-            # Extract content if description is still empty
-            if not description or description.strip() == "":
-                content_elem = latest.find('.//content:encoded')
-                if content_elem is not None:
-                    description = content_elem.text
+            print(f"\nFinal content length: {len(content)}")
 
             # Extract publication date
             pub_date_elem = latest.find('.//pubDate')
@@ -138,13 +197,28 @@ def get_latest_article(feed_url):
                 pub_date_elem = latest.find('.//{http://www.w3.org/2005/Atom}published')
             pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now().isoformat()
 
+            # Extract guid/id
+            guid_elem = latest.find('.//guid')
+            guid = guid_elem.text if guid_elem is not None else None
+
+            # Extract author/creator
+            creator_elem = latest.find('.//dc:creator', namespaces) or latest.find('.//{http://purl.org/dc/elements/1.1/}creator')
+            creator = creator_elem.text if creator_elem is not None else None
+
+            # Extract media:thumbnail if available
+            thumbnail_elem = latest.find('.//media:thumbnail', namespaces) or latest.find('.//{http://search.yahoo.com/mrss/}thumbnail')
+            thumbnail_url = thumbnail_elem.get('url') if thumbnail_elem is not None else None
+
             article = {
                 "title": title,
-                "description": description,
-                "content": description,  # Using description as content
+                "description": content[:500] + "..." if len(content) > 500 else content,  # First 500 chars as description
+                "content": content,  # Full content
                 "link": link,
                 "pub_date": pub_date,
-                "retrieved_at": datetime.datetime.now().isoformat()
+                "retrieved_at": datetime.datetime.now().isoformat(),
+                "guid": guid,
+                "creator": creator,
+                "thumbnail_url": thumbnail_url
             }
 
             # Create a unique ID for the article
@@ -155,10 +229,14 @@ def get_latest_article(feed_url):
 
         except ET.ParseError as e:
             print(f"⚠️ Error parsing XML from {feed_url}: {str(e)}")
+            print("Raw content that failed to parse:")
+            print(response.content.decode('utf-8'))
             return None
 
     except Exception as e:
         print(f"⚠️ Error fetching feed {feed_url}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Function to save retrieved article
@@ -174,16 +252,16 @@ def save_retrieved_article(feed_name, article):
     return file_path
 
 # Function to generate custom post content using OpenAI
-def rewrite_article(article, prompt):
-    prompt_text = f"{prompt}\n\nTitle: {article['title']}\nContent: {article['content']}"
+def rewrite_article(article, prompt, system_prompt):
+    prompt_text = f"{prompt}\n\nTitle: {article['title']}\nDescription: {article['description']}\nContent: {article['content']}"
 
     response = client.responses.create(
         model=MODEL,
         input=[
-            {"role": "system", "content": "You are a professional social media copywriter."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_text}
         ],
-        temperature=0.7,
+        temperature=0.5,
         max_output_tokens=1000
     )
 
@@ -305,7 +383,9 @@ def main():
 
         # Rewrite the article
         print(f"📝 Rewriting article: {article['title']}")
-        rewritten_content = rewrite_article(article, feed["prompt"])
+        # Use feed-specific system prompt or default to a generic one if not provided
+        system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
+        rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
         log_rewritten_article(feed["name"], rewritten_content)
 
         # Verify the rewritten content

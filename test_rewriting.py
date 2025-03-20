@@ -10,10 +10,11 @@ import os
 import sys
 from dotenv import load_dotenv
 
-sys.path.append('simpost')  # Add simpost directory to path
+# Add the parent directory to the path so we can import the module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the required functions from our main script
-from multi_feed_news_automation import get_latest_article, rewrite_article
+from simpost.multi_feed_news_automation import get_latest_article, rewrite_article
 
 # Load environment variables
 load_dotenv()
@@ -45,7 +46,9 @@ def main():
     # Rewrite the article
     print("\nRewriting article with OpenAI...")
     try:
-        rewritten_content = rewrite_article(article, feed["prompt"])
+        # Get system prompt from feed config or use default
+        system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
+        rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
         
         print("\n=== Rewritten content ===")
         print(rewritten_content)
