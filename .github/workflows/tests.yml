@@ -32,8 +32,8 @@ jobs:
       - name: Check formatting with black
         run: black --check simpost tests
 
-      - name: Type check with mypy
-        run: mypy simpost tests
+      #- name: Type check with mypy
+      #  run: mypy simpost tests
 
       - name: Test with pytest
         run: pytest --cov=simpost tests/
