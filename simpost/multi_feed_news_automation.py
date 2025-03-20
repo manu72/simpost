@@ -279,8 +279,8 @@ def post_to_facebook(post_text, link, page_id):
         print(f"❌ Failed to post to page {page_id}: {response.text}")
         return False
 
-# Main script to process all feeds
-if __name__ == "__main__":
+# Main function to process all feeds
+def main():
     for feed in feeds:
         if not feed.get("active", True):
             print(f"⏭️ Skipping inactive feed: {feed['name']}")
@@ -343,3 +343,7 @@ if __name__ == "__main__":
             print("⚠️ Content was not published due to verification failure")
 
         print("="*50 + "\n")
+
+# Main script to process all feeds
+if __name__ == "__main__":
+    main()
