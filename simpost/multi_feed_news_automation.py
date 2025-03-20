@@ -14,6 +14,7 @@ import os
 import json
 import hashlib
 import datetime
+import time
 import requests
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -55,6 +56,22 @@ def create_article_id(title, link):
 def is_article_processed(feed_name, article_id):
     # Check if the article has been rewritten
     rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
+
+    
+    if not os.path.exists(rewritten_file):
+        return False, False, False
+    
+    # Read the article data to check verification and posting status
+    with open(rewritten_file, 'r', encoding='utf-8') as f:
+        try:
+            data = json.load(f)
+            is_verified = data.get('is_verified', False)
+            is_posted = data.get('is_posted', False)
+            return True, is_verified, is_posted
+        except json.JSONDecodeError:
+            # If file exists but can't be read, consider it not processed
+            return False, False, False
+
     return os.path.exists(rewritten_file)
 
 # Function to parse an individual article item from RSS/Atom feed
@@ -362,13 +379,111 @@ def mark_article_as_posted(feed_name, article_id):
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
+# Function to get rewritten articles that are verified but not posted
+def get_unposted_verified_articles(feed_name):
+    """
+    Get verified but unposted articles for a feed
+    
+    Args:
+        feed_name (str): Name of the feed
+        
+    Returns:
+        list: List of tuples containing (article_id, article_data, rewritten_content, article_link)
+    """
+    feed_dir = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))
+    
+    if not os.path.exists(feed_dir):
+        return []
+    
+    unposted_articles = []
+    
+    for filename in os.listdir(feed_dir):
+        if not filename.endswith('.json'):
+            continue
+            
+        filepath = os.path.join(feed_dir, filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+                
+                # Check if article is verified but not posted
+                if data.get('is_verified', False) and not data.get('is_posted', False):
+                    article_id = data.get('id')
+                    rewritten_content = data.get('rewritten_content')
+                    article_link = data.get('original_article', {}).get('link')
+                    article_title = data.get('original_article', {}).get('title', 'No title')
+                    
+                    if article_id and rewritten_content and article_link:
+                        unposted_articles.append((article_id, data, rewritten_content, article_link, article_title))
+                        
+            except json.JSONDecodeError:
+                print(f"Warning: Could not decode {filepath}")
+    
+    return unposted_articles
+
 # Function to post content to Facebook
-def post_to_facebook(post_text, link, page_id):
-    url = f"https://graph.facebook.com/v12.0/{page_id}/feed"
+def post_to_facebook(post_text, link, page_id, page_access_token=None):
+    """
+    Post content to a Facebook page
+    
+    Args:
+        post_text (str): The text content to post
+        link (str): Link to include in the post
+        page_id (str): The Facebook page ID
+        page_access_token (str, optional): Page-specific access token. 
+                                          If None, falls back to global token.
+    
+    Returns:
+        bool: True if posting was successful, False otherwise
+    """
+    # Use page-specific token if provided, otherwise fall back to global token
+    access_token = page_access_token or FACEBOOK_PAGE_ACCESS_TOKEN
+    
+    if not access_token:
+        print(f"❌ No access token available for page {page_id}")
+        print("   Add page_access_token to this feed in feeds.json")
+        return False
+    
+    # Try with latest API version first (v19.0 as of 2024)
+    url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
     data = {
-        "message": f"{post_text}\n\nRead more: {link}",
-        "access_token": FACEBOOK_PAGE_ACCESS_TOKEN
+        "message": f"{post_text}\n\n{link}",
+        "access_token": access_token
     }
+    
+    try:
+        print(f"Attempting to post to Facebook page {page_id}...")
+        response = requests.post(url, data=data)
+        
+        if response.status_code == 200:
+            print(f"✅ Posted successfully to page {page_id}!")
+            return True
+        else:
+            # If v19.0 fails, fallback to v12.0
+            print(f"❌ Failed with API v19.0 (Status: {response.status_code})")
+            print(f"Error details: {response.text}")
+            print("Trying with API v12.0...")
+            
+            url = f"https://graph.facebook.com/v12.0/{page_id}/feed"
+            response = requests.post(url, data=data)
+            
+            if response.status_code == 200:
+                print(f"✅ Posted successfully to page {page_id} with API v12.0!")
+                return True
+            else:
+                print(f"❌ Failed to post to page {page_id} with API v12.0 (Status: {response.status_code})")
+                print(f"Error details: {response.text}")
+                print("Common issues:")
+                print("- Invalid or expired access token")
+                print("- Missing page permissions (pages_manage_posts, pages_read_engagement)")
+                print("- Incorrect page ID")
+                print("- Content policy violation")
+                return False
+    except Exception as e:
+        print(f"❌ Exception while posting to Facebook: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
     response = requests.post(url, data=data)
 
     if response.status_code == 200:
@@ -404,6 +519,38 @@ def main():
             print(f"\n🔄 Processing article: {article['title']}")
             
             # Check if we've already processed this article
+            is_processed, is_verified, is_posted = is_article_processed(feed['name'].replace(' ', '_'), article['id'])
+            
+            if is_processed:
+                print(f"📝 Article already processed: {article['title']}")
+                
+                # If the article is verified but not posted, and auto-posting is enabled, post it
+                if is_verified and not is_posted and feed.get("facebook_page_id") and feed.get("auto_post", True):
+                    print(f"✅ Article already verified but not posted. Attempting to post...")
+                    
+                    # Get the article data from the file
+                    rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed['name'].replace(' ', '_'), f"{article['id']}.json")
+                    with open(rewritten_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    # Post to Facebook
+                    rewritten_content = data.get('rewritten_content')
+                    if rewritten_content and post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"], feed.get("page_access_token")):
+                        # Mark the article as posted
+                        mark_article_as_posted(feed['name'].replace(' ', '_'), article['id'])
+                        print(f"✅ Successfully posted already verified article")
+                        
+                        # Add delay between posts if specified
+                        if len(articles) > 1 and article != articles[-1]:
+                            post_delay = feed.get("delay_each_post", 10)  # Default 10 seconds
+                            if post_delay > 0:
+                                print(f"⏱️ Waiting {post_delay} seconds before processing next article...")
+                                time.sleep(post_delay)
+                    else:
+                        print(f"❌ Failed to post already verified article")
+                else:
+                    print(f"⏭️ Skipping article (verified: {is_verified}, posted: {is_posted})")
+                
             if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
                 print(f"⏭️ Skipping already processed article: {article['title']}")
                 continue
@@ -444,9 +591,19 @@ def main():
             if is_verified:
                 print(f"✅ VERIFIED: {verification_message}")
                 if feed.get("facebook_page_id") and feed.get("auto_post", True):
-                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
+                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"], feed.get("page_access_token")):
                         # Mark the article as posted
                         mark_article_as_posted(feed['name'].replace(' ', '_'), article['id'])
+                        
+                        # Wait before processing next article if more articles to process
+                        if len(articles) > 1 and article != articles[-1]:
+                            post_delay = feed.get("delay_each_post", 10)  # Default 10 seconds
+                            if post_delay > 0:
+                                print(f"⏱️ Waiting {post_delay} seconds before processing next article...")
+                                time.sleep(post_delay)
+                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
+                        # Mark the article as posted
+
                 else:
                     print("ℹ️ No Facebook page ID provided or auto-posting disabled, skipping posting")
             else:
@@ -454,6 +611,30 @@ def main():
                 print("⚠️ Content was not published due to verification failure")
     
             print("="*50 + "\n")
+        
+        # Check for any additional verified but unposted articles
+        if feed.get("facebook_page_id") and feed.get("auto_post", True):
+            unposted_articles = get_unposted_verified_articles(feed['name'])
+            if unposted_articles:
+                print(f"\n📋 Found {len(unposted_articles)} verified but unposted articles for {feed['name']}")
+                
+                for article_id, data, rewritten_content, article_link, article_title in unposted_articles:
+                    print(f"🔄 Posting previously verified article: {article_title}")
+                    
+                    if post_to_facebook(rewritten_content, article_link, feed["facebook_page_id"], feed.get("page_access_token")):
+                        # Mark the article as posted
+                        mark_article_as_posted(feed['name'].replace(' ', '_'), article_id)
+                        print(f"✅ Successfully posted previously verified article (ID: {article_id})")
+                    else:
+                        print(f"❌ Failed to post previously verified article (ID: {article_id})")
+                    
+                    # Add delay between posts if specified
+                    post_delay = feed.get("delay_each_post", 10)  # Default 10 seconds
+                    if post_delay > 0 and article_id != unposted_articles[-1][0]:  # Don't delay after the last article
+                        print(f"⏱️ Waiting {post_delay} seconds before next post...")
+                        time.sleep(post_delay)
+                        
+                print("="*50 + "\n")
 
 # Main script to process all feeds
 if __name__ == "__main__":

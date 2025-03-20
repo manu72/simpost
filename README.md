@@ -35,6 +35,24 @@ A Python project for automating the processing of multiple news feeds, rewriting
    - Copy `.env.example` to `.env` (if available)
    - Edit `.env` with your API keys:
      - `OPENAI_API_KEY`: Your OpenAI API key for rewriting and verification
+     - `FACEBOOK_PAGE_ACCESS_TOKEN`: Your Facebook access token for posting (see below for instructions)
+
+### Getting a Facebook Page Access Token
+
+Each Facebook Page requires its own unique Page Access Token. Follow these steps to obtain a token:
+
+1. Create a Facebook Developer account at [developers.facebook.com](https://developers.facebook.com/)
+2. Create a new App in the Facebook Developer Dashboard
+3. Add the "Facebook Login" product to your app
+4. Configure settings and add the necessary permissions (pages_manage_posts, pages_read_engagement)
+5. Navigate to the Graph API Explorer tool
+6. Select your App from the dropdown menu
+7. Click on "Get Token" and select "Page Access Token"
+8. Choose the Facebook Page you want to post to
+9. Request a long-lived token to avoid frequent token refreshes
+10. Copy the generated token to your feeds.json file as page_access_token
+
+**Important:** If you're posting to multiple Facebook Pages, you'll need a separate access token for each page. In your `feeds.json` configuration, specify the different tokens for each feed using the `page_access_token` property.
      - `FACEBOOK_PAGE_ACCESS_TOKEN`: Your Facebook access token for posting
 
 ## Usage
@@ -54,6 +72,7 @@ python article_manager.py [command] [options]
 ```
 
 Commands:
+
 - `feeds`: List all feeds with stored articles
 - `list <feed_name>`: List articles for a specific feed
 - `view <feed_name> <article_id>`: View a specific article
@@ -73,6 +92,8 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
   "facebook_page_id": "your-facebook-page-id",
   "max_articles": 10,
   "auto_post": true,
+
+  "delay_each_post": 10,
   "system_prompt": "System prompt for the AI model",
   "prompt": "Specific instructions for rewriting articles"
 }
@@ -80,6 +101,7 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
 
 - `max_articles`: Maximum number of articles to retrieve from the feed (default: 10)
 - `auto_post`: Whether to automatically post verified articles (default: true)
+- `delay_each_post`: Number of seconds to wait between posting articles (default: 10)
 
 ## Project Structure
 
