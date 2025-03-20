@@ -38,3 +38,6 @@ output/
 *.swo 
 /CLAUDE.md
 /data
+/logs
+/test_migration_guide.md
+/testing_recommendations.md
