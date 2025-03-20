@@ -56,6 +56,7 @@ def create_article_id(title, link):
 def is_article_processed(feed_name, article_id):
     # Check if the article has been rewritten
     rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
+
     
     if not os.path.exists(rewritten_file):
         return False, False, False
@@ -70,6 +71,8 @@ def is_article_processed(feed_name, article_id):
         except json.JSONDecodeError:
             # If file exists but can't be read, consider it not processed
             return False, False, False
+
+    return os.path.exists(rewritten_file)
 
 # Function to parse an individual article item from RSS/Atom feed
 def parse_article_item(item, namespaces):
@@ -480,6 +483,14 @@ def post_to_facebook(post_text, link, page_id, page_access_token=None):
         print(f"❌ Exception while posting to Facebook: {str(e)}")
         import traceback
         traceback.print_exc()
+
+    response = requests.post(url, data=data)
+
+    if response.status_code == 200:
+        print(f"✅ Posted successfully to page {page_id}!")
+        return True
+    else:
+        print(f"❌ Failed to post to page {page_id}: {response.text}")
         return False
 
 # Main function to process all feeds
@@ -540,6 +551,8 @@ def main():
                 else:
                     print(f"⏭️ Skipping article (verified: {is_verified}, posted: {is_posted})")
                 
+            if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
+                print(f"⏭️ Skipping already processed article: {article['title']}")
                 continue
             
             # Save the retrieved article
@@ -588,6 +601,9 @@ def main():
                             if post_delay > 0:
                                 print(f"⏱️ Waiting {post_delay} seconds before processing next article...")
                                 time.sleep(post_delay)
+                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
+                        # Mark the article as posted
+
                 else:
                     print("ℹ️ No Facebook page ID provided or auto-posting disabled, skipping posting")
             else:
