@@ -12,6 +12,8 @@ and posts verified content to Facebook Pages.
 import xml.etree.ElementTree as ET
 import os
 import json
+import hashlib
+import datetime
 import requests
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -26,9 +28,34 @@ FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Create directory structure for storing articles
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+RETRIEVED_ARTICLES_DIR = os.path.join(DATA_DIR, "retrieved_articles")
+REWRITTEN_ARTICLES_DIR = os.path.join(DATA_DIR, "rewritten_articles")
+LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+
+# Ensure directories exist
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(RETRIEVED_ARTICLES_DIR, exist_ok=True)
+os.makedirs(REWRITTEN_ARTICLES_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 # Load feed configurations from JSON file
 with open("feeds.json", "r") as file:
     feeds = json.load(file)
+
+# Function to create a unique ID for an article
+def create_article_id(title, link):
+    # Add date prefix in YYYYMMDD_ format
+    date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
+    unique_string = f"{title}|{link}"
+    return date_prefix + hashlib.md5(unique_string.encode()).hexdigest()
+
+# Function to check if article has already been processed
+def is_article_processed(feed_name, article_id):
+    # Check if the article has been rewritten
+    rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
+    return os.path.exists(rewritten_file)
 
 # Function to fetch latest article from RSS Feed
 def get_latest_article(feed_url):
@@ -105,12 +132,26 @@ def get_latest_article(feed_url):
                 if content_elem is not None:
                     description = content_elem.text
 
-            return {
+            # Extract publication date
+            pub_date_elem = latest.find('.//pubDate')
+            if pub_date_elem is None:
+                pub_date_elem = latest.find('.//{http://www.w3.org/2005/Atom}published')
+            pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now().isoformat()
+
+            article = {
                 "title": title,
                 "description": description,
                 "content": description,  # Using description as content
-                "link": link
+                "link": link,
+                "pub_date": pub_date,
+                "retrieved_at": datetime.datetime.now().isoformat()
             }
+
+            # Create a unique ID for the article
+            article_id = create_article_id(title, link)
+            article["id"] = article_id
+
+            return article
 
         except ET.ParseError as e:
             print(f"⚠️ Error parsing XML from {feed_url}: {str(e)}")
@@ -119,6 +160,18 @@ def get_latest_article(feed_url):
     except Exception as e:
         print(f"⚠️ Error fetching feed {feed_url}: {str(e)}")
         return None
+
+# Function to save retrieved article
+def save_retrieved_article(feed_name, article):
+    feed_dir = os.path.join(RETRIEVED_ARTICLES_DIR, feed_name.replace(' ', '_'))
+    os.makedirs(feed_dir, exist_ok=True)
+    
+    file_path = os.path.join(feed_dir, f"{article['id']}.json")
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(article, f, indent=2, ensure_ascii=False)
+    
+    return file_path
 
 # Function to generate custom post content using OpenAI
 def rewrite_article(article, prompt):
@@ -135,6 +188,28 @@ def rewrite_article(article, prompt):
     )
 
     return response.output_text.strip()
+
+# Function to save rewritten article
+def save_rewritten_article(feed_name, article_id, original_article, rewritten_content, is_verified, verification_message):
+    feed_dir = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))
+    os.makedirs(feed_dir, exist_ok=True)
+    
+    data = {
+        "id": article_id,
+        "original_article": original_article,
+        "rewritten_content": rewritten_content,
+        "is_verified": is_verified,
+        "verification_message": verification_message,
+        "rewritten_at": datetime.datetime.now().isoformat(),
+        "is_posted": False
+    }
+    
+    file_path = os.path.join(feed_dir, f"{article_id}.json")
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    return file_path
 
 # Function to verify rewritten content using OpenAI web search
 def verify_rewritten_article(rewritten_content, article_link):
@@ -168,12 +243,25 @@ def verify_rewritten_article(rewritten_content, article_link):
 
 # Function to log rewritten articles to a Markdown file
 def log_rewritten_article(feed_name, rewritten_content):
-    filename = f"logs/{feed_name.replace(' ', '_')}.md"
-    os.makedirs("logs", exist_ok=True)
+    filename = os.path.join(LOGS_DIR, f"{feed_name.replace(' ', '_')}.md")
     with open(filename, "a", encoding="utf-8") as file:
-        file.write(f"## {feed_name} - New Post\n\n")
+        file.write(f"## {feed_name} - New Post ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})\n\n")
         file.write(rewritten_content + "\n\n---\n\n")
     print(f"📁 Logged rewritten post for {feed_name}")
+
+# Function to mark article as posted
+def mark_article_as_posted(feed_name, article_id):
+    file_path = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'), f"{article_id}.json")
+    
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        data["is_posted"] = True
+        data["posted_at"] = datetime.datetime.now().isoformat()
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
 # Function to post content to Facebook
 def post_to_facebook(post_text, link, page_id):
@@ -186,25 +274,56 @@ def post_to_facebook(post_text, link, page_id):
 
     if response.status_code == 200:
         print(f"✅ Posted successfully to page {page_id}!")
+        return True
     else:
         print(f"❌ Failed to post to page {page_id}: {response.text}")
+        return False
 
 # Main script to process all feeds
 if __name__ == "__main__":
     for feed in feeds:
-        print(f"📢 Processing feed: {feed['name']} ({feed['rss_url']})")
-
-        article = get_latest_article(feed["rss_url"])
-        if not article:
+        if not feed.get("active", True):
+            print(f"⏭️ Skipping inactive feed: {feed['name']}")
             continue
 
+        print(f"📢 Processing feed: {feed['name']} ({feed['rss_url']})")
+        
+        # Get the latest article
+        article = get_latest_article(feed["rss_url"])
+        if not article:
+            print(f"⚠️ Could not retrieve article from {feed['name']}")
+            continue
+        
+        # Check if we've already processed this article
+        if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
+            print(f"⏭️ Skipping already processed article: {article['title']}")
+            continue
+        
+        # Save the retrieved article
+        retrieved_path = save_retrieved_article(feed['name'].replace(' ', '_'), article)
+        print(f"💾 Saved retrieved article to {retrieved_path}")
+
+        # Rewrite the article
         print(f"📝 Rewriting article: {article['title']}")
         rewritten_content = rewrite_article(article, feed["prompt"])
         log_rewritten_article(feed["name"], rewritten_content)
 
+        # Verify the rewritten content
         print(f"🔍 Verifying article content...")
         is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"])
+        
+        # Save the rewritten article
+        rewritten_path = save_rewritten_article(
+            feed['name'].replace(' ', '_'), 
+            article['id'], 
+            article, 
+            rewritten_content, 
+            is_verified, 
+            verification_message
+        )
+        print(f"💾 Saved rewritten article to {rewritten_path}")
 
+        # Display results
         print("\n" + "="*50)
         print(f"📋 Generated content for {feed['name']}:")
         print("-"*50)
@@ -214,7 +333,9 @@ if __name__ == "__main__":
         if is_verified:
             print(f"✅ VERIFIED: {verification_message}")
             if feed.get("facebook_page_id"):
-                post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"])
+                if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
+                    # Mark the article as posted
+                    mark_article_as_posted(feed['name'].replace(' ', '_'), article['id'])
             else:
                 print("ℹ️ No Facebook page ID provided, skipping posting")
         else:
