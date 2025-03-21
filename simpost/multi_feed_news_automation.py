@@ -23,6 +23,9 @@ from dotenv import load_dotenv
 
 MODEL = "chatgpt-4o-latest"
 
+# Maximum age of posts to process (in hours)
+IGNORE_POSTS_OLDER_THAN = 12
+
 # Load API keys from .env file
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -148,7 +151,7 @@ def parse_article_item(item, namespaces):
     pub_date_elem = item.find('.//pubDate')
     if pub_date_elem is None:
         pub_date_elem = item.find('.//{http://www.w3.org/2005/Atom}published')
-    pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now().isoformat()
+    pub_date = pub_date_elem.text if pub_date_elem is not None else datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     # Extract guid/id
     guid_elem = item.find('.//guid')
@@ -348,7 +351,44 @@ def save_rewritten_article(feed_name, article_id, original_article, rewritten_co
     return file_path
 
 # Function to verify rewritten content using OpenAI web search
-def verify_rewritten_article(rewritten_content, article_link):
+def verify_rewritten_article(rewritten_content, article_link, article_pub_date=None):
+    # Check if article is too old
+    if article_pub_date:
+        try:
+            # Convert pub_date string to datetime
+            if isinstance(article_pub_date, str):
+                # Try common date formats
+                for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"]:
+                    try:
+                        pub_date = datetime.datetime.strptime(article_pub_date, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If none of the formats work, try without timezone
+                    try:
+                        pub_date = datetime.datetime.fromisoformat(article_pub_date.replace('Z', ''))
+                        # Assume UTC for dates without timezone
+                        pub_date = pub_date.replace(tzinfo=datetime.timezone.utc)
+                    except (ValueError, AttributeError):
+                        # If all parsing fails, skip age check
+                        pub_date = None
+            else:
+                pub_date = None
+                
+            # Calculate age in hours if pub_date was successfully parsed
+            if pub_date:
+                now = datetime.datetime.now(datetime.timezone.utc)
+                age_hours = (now - pub_date).total_seconds() / 3600
+                
+                if age_hours > IGNORE_POSTS_OLDER_THAN:
+                    explanation = f"Article is {age_hours:.1f} hours old, which exceeds the {IGNORE_POSTS_OLDER_THAN} hour limit."
+                    print(f"⏭️ Article is too old: {explanation}")
+                    return False, f"NOT VERIFIED: {explanation}"
+        except Exception as e:
+            # If there's any error in date parsing, just log and continue with verification
+            print(f"⚠️ Warning: Error checking article age: {str(e)}")
+    
     verification_prompt = (
         f"Fact-check this social media post against the latest news. DO NOT use wikipedia or any other sources that are not news sources:\n\n"
         f"{rewritten_content}\n\n"
@@ -614,7 +654,9 @@ def post_to_facebook(post_text, link, page_id, page_access_token=None):
     # Try with latest API version first (v19.0 as of 2024)
     url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
     data = {
-        "message": f"{post_text}\n\n{link}",
+        #"message": f"{post_text}\n\n{link}",
+        "message": post_text,
+        "link": link,
         "access_token": access_token
     }
     
@@ -732,7 +774,7 @@ def main():
     
             # Verify the rewritten content
             print(f"🔍 Verifying article content...")
-            is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"])
+            is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"], article["pub_date"])
             
             # Add delay after OpenAI API call
             add_api_call_delay()
