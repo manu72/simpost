@@ -16,15 +16,18 @@ import hashlib
 import datetime
 import time
 import requests
+import smtplib
+from email.message import EmailMessage
 from openai import OpenAI
 from dotenv import load_dotenv
 
-MODEL = "gpt-4o"
+MODEL = "chatgpt-4o-latest"
 
 # Load API keys from .env file
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
+SYSTEM_ADMIN_EMAIL = os.getenv("SYSTEM_ADMIN_EMAIL", "manuhume@hotmail.com")
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -290,17 +293,37 @@ def save_retrieved_article(feed_name, article):
 def rewrite_article(article, prompt, system_prompt):
     prompt_text = f"{prompt}\n\nTitle: {article['title']}\nDescription: {article['description']}\nContent: {article['content']}"
 
-    response = client.responses.create(
-        model=MODEL,
-        input=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt_text}
-        ],
-        temperature=0.5,
-        max_output_tokens=1000
-    )
-
-    return response.output_text.strip()
+    # Add retry logic with exponential backoff
+    max_retries = 5
+    retry_delay = 1  # Start with 1 second delay
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.responses.create(
+                model=MODEL,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt_text}
+                ],
+                temperature=0.5,
+                max_output_tokens=1000
+            )
+            return response.output_text.strip()
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg:
+                if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"⚠️ Rate limit exceeded. Waiting {wait_time} seconds before retry {attempt+1}/{max_retries}...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"❌ Maximum retries reached for API call. Error: {str(e)}")
+                    raise
+            else:
+                # If it's not a rate limit error, re-raise it immediately
+                print(f"❌ Error calling OpenAI API: {str(e)}")
+                raise
 
 # Function to save rewritten article
 def save_rewritten_article(feed_name, article_id, original_article, rewritten_content, is_verified, verification_message):
@@ -327,32 +350,86 @@ def save_rewritten_article(feed_name, article_id, original_article, rewritten_co
 # Function to verify rewritten content using OpenAI web search
 def verify_rewritten_article(rewritten_content, article_link):
     verification_prompt = (
-        f"Fact-check this social media post against the latest news:\n\n"
+        f"Fact-check this social media post against the latest news. DO NOT use wikipedia or any other sources that are not news sources:\n\n"
         f"{rewritten_content}\n\n"
         f"Original article link: {article_link}\n\n"
-        f"Is this post factually accurate based on the latest information? "
-        f"If the post is factually correct, respond with 'VERIFIED' followed by a brief explanation. "
-        f"If it contains outdated or misleading information, respond with 'NOT VERIFIED' followed by a brief explanation of the issues."
+        f"Is this post factually accurate journalism based on the latest news information? "
+        f"If the post contains outdated or misleading information, respond with 'NOT VERIFIED' followed by a brief explanation of the issues. "
+        f"If the post is not outdated or misleading, respond with 'VERIFIED'."
     )
 
-    response = client.responses.create(
-        model=MODEL,
-        tools=[{"type": "web_search_preview"}],
-        input=verification_prompt,
-        max_output_tokens=500,
-        temperature=0
-    )
-
-    verification_result = response.output_text.strip()
+    # Add retry logic with exponential backoff
+    max_retries = 5
+    retry_delay = 1  # Start with 1 second delay
     
-    # Fix verification logic to avoid false positives
-    # Check if it starts with "VERIFIED" or has "NOT VERIFIED"
-    is_verified = (
-        "NOT VERIFIED" not in verification_result.upper() and 
-        "VERIFIED" in verification_result.upper()
-    )
-    
-    return is_verified, verification_result
+    for attempt in range(max_retries):
+        try:
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                tools=[{"type": "web_search_preview"}],
+                input=verification_prompt,
+                max_output_tokens=500,
+                temperature=0
+            )
+            
+            verification_result = response.output_text.strip()
+            
+            # Improved verification logic
+            # First check if the response explicitly says "NOT VERIFIED" at the beginning
+            if verification_result.upper().startswith("NOT VERIFIED"):
+                is_verified = False
+            # Then check if it explicitly says "VERIFIED" at the beginning
+            elif verification_result.upper().startswith("VERIFIED"):
+                is_verified = True
+            # For mixed messages, check the overall content and meaning
+            else:
+                # Look for phrases indicating factual accuracy
+                positive_indicators = [
+                    "factually accurate",
+                    "accurately reflects",
+                    "no issues found",
+                    "correctly states",
+                    "accurate representation",
+                    "the post is accurate",
+                    "is accurate"
+                ]
+                
+                # Look for clear negative indicators
+                negative_indicators = [
+                    "misleading",
+                    "inaccurate",
+                    "outdated",
+                    "false",
+                    "not factual",
+                    "incorrect"
+                ]
+                
+                # Count positive and negative signals
+                positive_count = sum(1 for indicator in positive_indicators if indicator.lower() in verification_result.lower())
+                negative_count = sum(1 for indicator in negative_indicators if indicator.lower() in verification_result.lower())
+                
+                # Make decision based on indicators
+                if positive_count > negative_count:
+                    is_verified = True
+                else:
+                    is_verified = False
+            
+            return is_verified, verification_result
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg:
+                if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"⚠️ Rate limit exceeded. Waiting {wait_time} seconds before retry {attempt+1}/{max_retries}...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"❌ Maximum retries reached for API call. Error: {str(e)}")
+                    raise
+            else:
+                # If it's not a rate limit error, re-raise it immediately
+                print(f"❌ Error calling OpenAI API: {str(e)}")
+                raise
 
 # Function to log rewritten articles to a Markdown file
 def log_rewritten_article(feed_name, rewritten_content):
@@ -361,6 +438,99 @@ def log_rewritten_article(feed_name, rewritten_content):
         file.write(f"## {feed_name} - New Post ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})\n\n")
         file.write(rewritten_content + "\n\n---\n\n")
     print(f"📁 Logged rewritten post for {feed_name}")
+
+# Load additional email configuration from environment
+SMTP_SERVER = os.getenv("SMTP_SERVER", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", SYSTEM_ADMIN_EMAIL)
+
+# Function to send email notification for not verified articles
+def send_verification_failure_email(feed_name, article_title, article_link, verification_message, rewritten_content):
+    """
+    Send an email notification when an article fails verification
+    
+    Args:
+        feed_name (str): Name of the feed
+        article_title (str): Title of the article
+        article_link (str): Link to the original article
+        verification_message (str): Message explaining why verification failed
+        rewritten_content (str): The rewritten article that failed verification
+    """
+    if not SYSTEM_ADMIN_EMAIL:
+        print("⚠️ No admin email configured, skipping notification")
+        return False
+        
+    # Create email content
+    msg = EmailMessage()
+    msg['Subject'] = f'⚠️ SimPost: Article Verification Failed - {feed_name}'
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = SYSTEM_ADMIN_EMAIL
+    
+    # Email content
+    email_content = f"""
+    An article from {feed_name} failed the verification process.
+    
+    Article: {article_title}
+    Original link: {article_link}
+    
+    Verification failure reason:
+    {verification_message}
+    
+    Rewritten content that failed verification:
+    ----------
+    {rewritten_content}
+    ----------
+    
+    This is an automated notification from SimPost.
+    """
+    
+    msg.set_content(email_content)
+    
+    # Save notification to a file as fallback
+    fallback_filename = os.path.join(LOGS_DIR, "email_notifications", f"verification_failure_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    os.makedirs(os.path.dirname(fallback_filename), exist_ok=True)
+    with open(fallback_filename, 'w', encoding='utf-8') as f:
+        f.write(f"To: {SYSTEM_ADMIN_EMAIL}\n")
+        f.write(f"Subject: {msg['Subject']}\n\n")
+        f.write(email_content)
+    
+    # Try different email sending methods
+    sent = False
+    
+    # Try method 1: Configured SMTP server
+    if SMTP_SERVER and SMTP_USERNAME and SMTP_PASSWORD:
+        try:
+            print(f"📧 Attempting to send email via configured SMTP server ({SMTP_SERVER})")
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+                print(f"📧 Sent verification failure notification to {SYSTEM_ADMIN_EMAIL}")
+                sent = True
+                return True
+        except Exception as e:
+            print(f"⚠️ Failed to send email via configured SMTP: {str(e)}")
+    
+    # Try method 2: Local mail server
+    if not sent:
+        try:
+            print("📧 Attempting to send email via local mail server")
+            with smtplib.SMTP('localhost') as server:
+                server.send_message(msg)
+                print(f"📧 Sent verification failure notification to {SYSTEM_ADMIN_EMAIL}")
+                sent = True
+                return True
+        except Exception as e:
+            print(f"⚠️ Failed to send email via local server: {str(e)}")
+    
+    # Final fallback - inform user about the saved notification
+    if not sent:
+        print(f"📁 Email notification saved to {fallback_filename}")
+        print(f"⚠️ Could not send email notification. Add SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, and SMTP_PASSWORD to your .env file")
+        return False
 
 # Function to mark article as posted
 def mark_article_as_posted(feed_name, article_id):
@@ -484,6 +654,10 @@ def post_to_facebook(post_text, link, page_id, page_access_token=None):
 
 # Main function to process all feeds
 def main():
+    # Add a small delay between OpenAI API calls to avoid rate limits
+    def add_api_call_delay():
+        time.sleep(2)  # Small delay between API calls
+    
     for feed in feeds:
         if not feed.get("active", True):
             print(f"⏭️ Skipping inactive feed: {feed['name']}")
@@ -552,10 +726,16 @@ def main():
             system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
             rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
             log_rewritten_article(feed["name"], rewritten_content)
+            
+            # Add delay between OpenAI API calls
+            add_api_call_delay()
     
             # Verify the rewritten content
             print(f"🔍 Verifying article content...")
             is_verified, verification_message = verify_rewritten_article(rewritten_content, article["link"])
+            
+            # Add delay after OpenAI API call
+            add_api_call_delay()
             
             # Save the rewritten article
             rewritten_path = save_rewritten_article(
@@ -593,6 +773,15 @@ def main():
             else:
                 print(f"❌ NOT VERIFIED: {verification_message}")
                 print("⚠️ Content was not published due to verification failure")
+                
+                # Send email notification for verification failure
+                send_verification_failure_email(
+                    feed_name=feed['name'], 
+                    article_title=article['title'], 
+                    article_link=article['link'], 
+                    verification_message=verification_message,
+                    rewritten_content=rewritten_content
+                )
     
             print("="*50 + "\n")
         

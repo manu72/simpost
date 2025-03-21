@@ -54,6 +54,19 @@ Each Facebook Page requires its own unique Page Access Token. Follow these steps
 
 **Important:** If you're posting to multiple Facebook Pages, you'll need a separate access token for each page. In your `feeds.json` configuration, specify the different tokens for each feed using the `page_access_token` property.
 
+### Using the Facebook Token Utility
+
+For convenience, you can use the included `fbtoken.py` utility to generate long-lived Facebook Page tokens:
+
+```
+python -m simpost.fbtoken --app_id YOUR_APP_ID --app_secret YOUR_APP_SECRET --user_token YOUR_SHORT_LIVED_TOKEN
+```
+
+This utility will:
+1. Exchange your short-lived user token for a long-lived user token
+2. Fetch permanent page access tokens for all pages you manage
+3. Display the page tokens for you to copy into your feeds.json file
+
 ## Usage
 
 Run the main script to process all feeds:
@@ -61,6 +74,16 @@ Run the main script to process all feeds:
 ```
 python3 -m simpost.multi_feed_news_automation
 ```
+
+### API Rate Limit Handling
+
+The system includes built-in retry logic with exponential backoff for API calls to OpenAI:
+
+- Automatically retries API calls when rate limits are hit
+- Uses exponential backoff (increasing wait times between retries)
+- Maximum of 5 retry attempts for each API call
+- Helps maintain stable operation during high volume processing
+- Applies to both article rewriting and content verification calls
 
 ### Article Manager
 
@@ -89,6 +112,7 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
   "active": true,
   "rss_url": "https://example.com/feed.xml",
   "facebook_page_id": "your-facebook-page-id",
+  "page_access_token": "your-page-specific-access-token",
   "max_articles": 10,
   "auto_post": true,
   "delay_each_post": 10,
@@ -100,11 +124,13 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
 - `max_articles`: Maximum number of articles to retrieve from the feed (default: 10)
 - `auto_post`: Whether to automatically post verified articles (default: true)
 - `delay_each_post`: Number of seconds to wait between posting articles (default: 10)
+- `page_access_token`: Facebook Page-specific access token for this feed
 
 ## Project Structure
 
 - `simpost/multi_feed_news_automation.py`: Main script for processing feeds
 - `simpost/utils.py`: Utility functions
+- `simpost/fbtoken.py`: Utility to generate long-lived Facebook tokens
 - `article_manager.py`: Command-line utility to manage stored articles
 - `feeds.json`: Configuration file for RSS feeds
 - `.env`: Environment variables for the project
