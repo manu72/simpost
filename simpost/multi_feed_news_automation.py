@@ -823,9 +823,6 @@ def main():
                             if post_delay > 0:
                                 print(f"⏱️ Waiting {post_delay} seconds before processing next article...")
                                 time.sleep(post_delay)
-                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
-                        # Mark the article as posted
-
                 else:
                     print("ℹ️ No Facebook page ID provided or auto-posting disabled, skipping posting")
             else:
