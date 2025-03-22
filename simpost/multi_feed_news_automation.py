@@ -189,11 +189,11 @@ def parse_article_item(item, namespaces):
 
 
 # Function to fetch articles from RSS Feed
-def get_articles(feed_url, max_articles=10):
+def get_articles(feed_url, max_articles):
     """ Retrieve articles from an RSS or Atom feed.
     Args:
         feed_url (str): URL of the RSS/Atom feed
-        max_articles (int): Maximum number of articles to retrieve (default: 10)
+        max_articles (int): Maximum number of articles to retrieve
     Returns:
         list: List of article dictionaries or empty list if no articles found
     """
@@ -715,7 +715,7 @@ def main():
 
         print(f"📢 Processing feed: {feed['name']} ({feed['rss_url']})")
         
-        # Get max articles from the feed settings or default to 10
+        # Get max articles from the feed settings or default to 10 Note Feedcontrol FiveFilters has a limit of 10 articles per feed
         max_articles = feed.get("max_articles", 10)
         print(f"📊 Max articles to retrieve: {max_articles}")
         
@@ -823,9 +823,6 @@ def main():
                             if post_delay > 0:
                                 print(f"⏱️ Waiting {post_delay} seconds before processing next article...")
                                 time.sleep(post_delay)
-                    if post_to_facebook(rewritten_content, article["link"], feed["facebook_page_id"]):
-                        # Mark the article as posted
-
                 else:
                     print("ℹ️ No Facebook page ID provided or auto-posting disabled, skipping posting")
             else:
