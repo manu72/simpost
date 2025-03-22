@@ -15,10 +15,19 @@ sys.path.append('.')
 
 # Import the required functions from our main script
 from simpost.multi_feed_news_automation import (
-    get_latest_article, create_article_id, is_article_processed, 
+    create_article_id, is_article_processed, 
     save_retrieved_article, save_rewritten_article, mark_article_as_posted,
+    get_articles, parse_article_item,
     DATA_DIR, RETRIEVED_ARTICLES_DIR, REWRITTEN_ARTICLES_DIR
 )
+
+# Function to get the latest article from a feed (replacement for get_latest_article)
+def get_latest_article(feed_url):
+    """Get the latest article from a feed"""
+    articles = get_articles(feed_url, 1)
+    if articles and len(articles) > 0:
+        return articles[0]
+    return None
 
 def view_directory_structure():
     """Display the data directory structure"""
