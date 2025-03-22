@@ -15,9 +15,9 @@ import json
 import hashlib
 import datetime
 import time
-import requests
 import smtplib
 from email.message import EmailMessage
+import requests
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -53,6 +53,7 @@ with open("feeds.json", "r") as file:
 
 # Function to create a unique ID for an article
 def create_article_id(title, link):
+    """Create a unique ID for an article."""
     # Add date prefix in YYYYMMDD_ format
     date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
     unique_string = f"{title}|{link}"
@@ -60,13 +61,13 @@ def create_article_id(title, link):
 
 # Function to check if article has already been processed
 def is_article_processed(feed_name, article_id):
+    """Check if the article has been rewritten and if it has been posted."""
     # Check if the article has been rewritten
     rewritten_file = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
 
-    
     if not os.path.exists(rewritten_file):
         return False, False, False
-    
+
     # Read the article data to check verification and posting status
     with open(rewritten_file, 'r', encoding='utf-8') as f:
         try:
@@ -107,7 +108,7 @@ def parse_article_item(item, namespaces):
 
     # First try to get the full content from content:encoded
     content = ""
-    
+
     # Try different namespace patterns for content:encoded
     content_encoded_elem = None
     for xpath in [
@@ -123,7 +124,7 @@ def parse_article_item(item, namespaces):
                 break
         except Exception:
             continue
-    
+
     # If content:encoded not found or empty, fall back to description
     if not content or content.strip() == "":
         # Extract description/summary
@@ -189,13 +190,10 @@ def parse_article_item(item, namespaces):
 
 # Function to fetch articles from RSS Feed
 def get_articles(feed_url, max_articles=10):
-    """
-    Retrieve articles from an RSS or Atom feed.
-    
+    """ Retrieve articles from an RSS or Atom feed.
     Args:
         feed_url (str): URL of the RSS/Atom feed
         max_articles (int): Maximum number of articles to retrieve (default: 10)
-        
     Returns:
         list: List of article dictionaries or empty list if no articles found
     """
@@ -208,27 +206,27 @@ def get_articles(feed_url, max_articles=10):
         # Debug: Print raw XML content
         print("\n=== Raw XML Content ===")
         print(response.content.decode('utf-8')[:2000] + "...")  # First 2000 chars
-        
+
         # Parse XML content
         try:
             # Parse root first to inspect namespaces
             root = ET.fromstring(response.content)
-            
+
             # Debug: Print actual namespaces from the XML
             print("\n=== XML Namespaces ===")
             for prefix, uri in root.nsmap.items() if hasattr(root, 'nsmap') else []:
                 print(f"Prefix: {prefix}, URI: {uri}")
-            
+
             # Extract namespaces from root element attributes
             namespaces = {}
             for key, value in root.attrib.items():
                 if key.startswith('xmlns:'):
                     prefix = key.split(':')[1]
                     namespaces[prefix] = value
-            
+
             print("\n=== Extracted Namespaces ===")
             print(namespaces)
-            
+
             # Register common namespaces plus any found in the document
             namespaces.update({
                 'content': 'http://purl.org/rss/1.0/modules/content/',
@@ -249,11 +247,11 @@ def get_articles(feed_url, max_articles=10):
 
             total_items = len(items)
             print(f"\n=== Found {total_items} items ===")
-            
+
             # Limit the number of articles to process
             items_to_process = items[:max_articles] if max_articles > 0 else items
             print(f"Processing {len(items_to_process)} of {total_items} articles")
-            
+
             # Process each item
             articles = []
             for i, item in enumerate(items_to_process):
@@ -267,7 +265,7 @@ def get_articles(feed_url, max_articles=10):
                 except Exception as e:
                     print(f"⚠️ Error parsing article: {str(e)}")
                     continue
-            
+
             print(f"Successfully parsed {len(articles)} articles")
             return articles
 
@@ -285,24 +283,26 @@ def get_articles(feed_url, max_articles=10):
 
 # Function to save retrieved article
 def save_retrieved_article(feed_name, article):
+    """Save the retrieved article to a JSON file."""
     feed_dir = os.path.join(RETRIEVED_ARTICLES_DIR, feed_name.replace(' ', '_'))
     os.makedirs(feed_dir, exist_ok=True)
-    
+
     file_path = os.path.join(feed_dir, f"{article['id']}.json")
-    
+
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(article, f, indent=2, ensure_ascii=False)
-    
+
     return file_path
 
 # Function to generate custom post content using OpenAI
 def rewrite_article(article, prompt, system_prompt):
+    """Rewrite the article using OpenAI."""
     prompt_text = f"{prompt}\n\nTitle: {article['title']}\nDescription: {article['description']}\nContent: {article['content']}"
 
     # Add retry logic with exponential backoff
     max_retries = 5
     retry_delay = 1  # Start with 1 second delay
-    
+
     for attempt in range(max_retries):
         try:
             response = client.responses.create(
@@ -315,7 +315,7 @@ def rewrite_article(article, prompt, system_prompt):
                 max_output_tokens=1000
             )
             return response.output_text.strip()
-            
+
         except Exception as e:
             error_msg = str(e).lower()
             if "rate limit" in error_msg or "429" in error_msg:
@@ -333,9 +333,10 @@ def rewrite_article(article, prompt, system_prompt):
 
 # Function to save rewritten article
 def save_rewritten_article(feed_name, article_id, original_article, rewritten_content, is_verified, verification_message):
+    """Save the rewritten article to a JSON file."""
     feed_dir = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))
     os.makedirs(feed_dir, exist_ok=True)
-    
+
     data = {
         "id": article_id,
         "original_article": original_article,
@@ -345,16 +346,17 @@ def save_rewritten_article(feed_name, article_id, original_article, rewritten_co
         "rewritten_at": datetime.datetime.now().isoformat(),
         "is_posted": False
     }
-    
+
     file_path = os.path.join(feed_dir, f"{article_id}.json")
-    
+
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    
+
     return file_path
 
 # Function to verify rewritten content using OpenAI web search
 def verify_rewritten_article(rewritten_content, article_link, article_pub_date=None):
+    """Verify the rewritten article using OpenAI web search."""
     # Check if article is too old
     if article_pub_date:
         try:
@@ -378,12 +380,12 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
                         pub_date = None
             else:
                 pub_date = None
-                
+
             # Calculate age in hours if pub_date was successfully parsed
             if pub_date:
                 now = datetime.datetime.now(datetime.timezone.utc)
                 age_hours = (now - pub_date).total_seconds() / 3600
-                
+
                 if age_hours > IGNORE_POSTS_OLDER_THAN:
                     explanation = f"Article is {age_hours:.1f} hours old, which exceeds the {IGNORE_POSTS_OLDER_THAN} hour limit."
                     print(f"⏭️ Article is too old: {explanation}")
@@ -391,11 +393,12 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
         except Exception as e:
             # If there's any error in date parsing, just log and continue with verification
             print(f"⚠️ Warning: Error checking article age: {str(e)}")
-    
+
     verification_prompt = (
         f"Fact-check this social media post against the latest news. DO NOT use wikipedia or any other sources that are not news sources:\n\n"
         f"{rewritten_content}\n\n"
         f"Original article link: {article_link}\n\n"
+        f"Today's date and time is {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.\n\n"
         f"Is this post factually accurate journalism based on the latest news information? "
         f"If the post contains outdated or misleading information, respond with 'NOT VERIFIED' followed by a brief explanation of the issues. "
         f"If the post is not outdated or misleading, respond with 'VERIFIED'."
@@ -404,7 +407,7 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
     # Add retry logic with exponential backoff
     max_retries = 5
     retry_delay = 1  # Start with 1 second delay
-    
+
     for attempt in range(max_retries):
         try:
             response = client.responses.create(
@@ -414,9 +417,9 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
                 max_output_tokens=500,
                 temperature=0
             )
-            
+
             verification_result = response.output_text.strip()
-            
+
             # Improved verification logic
             # First check if the response explicitly says "NOT VERIFIED" at the beginning
             if verification_result.upper().startswith("NOT VERIFIED"):
@@ -436,7 +439,7 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
                     "the post is accurate",
                     "is accurate"
                 ]
-                
+
                 # Look for clear negative indicators
                 negative_indicators = [
                     "misleading",
@@ -446,19 +449,19 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
                     "not factual",
                     "incorrect"
                 ]
-                
+
                 # Count positive and negative signals
                 positive_count = sum(1 for indicator in positive_indicators if indicator.lower() in verification_result.lower())
                 negative_count = sum(1 for indicator in negative_indicators if indicator.lower() in verification_result.lower())
-                
+
                 # Make decision based on indicators
                 if positive_count > negative_count:
                     is_verified = True
                 else:
                     is_verified = False
-            
+
             return is_verified, verification_result
-            
+
         except Exception as e:
             error_msg = str(e).lower()
             if "rate limit" in error_msg or "429" in error_msg:
@@ -474,8 +477,9 @@ def verify_rewritten_article(rewritten_content, article_link, article_pub_date=N
                 print(f"❌ Error calling OpenAI API: {str(e)}")
                 raise
 
-# Function to log rewritten articles to a Markdown file
+# Function to log rewritten articles to a Markdown file but beware this does not specify if the article is posted or not
 def log_rewritten_article(feed_name, rewritten_content):
+    """Log the rewritten article to a Markdown file."""
     filename = os.path.join(LOGS_DIR, f"{feed_name.replace(' ', '_')}.md")
     with open(filename, "a", encoding="utf-8") as file:
         file.write(f"## {feed_name} - New Post ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})\n\n")
@@ -490,47 +494,42 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", SYSTEM_ADMIN_EMAIL)
 
 # Function to send email notification for not verified articles
-def send_verification_failure_email(feed_name, article_title, article_link, verification_message, rewritten_content):
-    """
-    Send an email notification when an article fails verification
-    
-    Args:
-        feed_name (str): Name of the feed
-        article_title (str): Title of the article
-        article_link (str): Link to the original article
-        verification_message (str): Message explaining why verification failed
-        rewritten_content (str): The rewritten article that failed verification
-    """
+def send_verification_failure_email(feed_name, article_title, article_link, article_pub_date, verification_message, rewritten_content, article_id):
+    """Send an email notification when an article fails verification."""
     if not SYSTEM_ADMIN_EMAIL:
         print("⚠️ No admin email configured, skipping notification")
         return False
-        
+
     # Create email content
     msg = EmailMessage()
     msg['Subject'] = f'⚠️ SimPost: Article Verification Failed - {feed_name}'
     msg['From'] = EMAIL_SENDER
     msg['To'] = SYSTEM_ADMIN_EMAIL
-    
+
     # Email content
     email_content = f"""
     An article from {feed_name} failed the verification process.
     
-    Article: {article_title}
-    Original link: {article_link}
-    
-    Verification failure reason:
+    Article Title: {article_title}
+    Article ID: {article_id}
+    Original Link: {article_link}
+    Original Publication Date: {article_pub_date}
+
+    Verification Failure Message:
+    ----------
     {verification_message}
-    
-    Rewritten content that failed verification:
+    ----------
+
+    Rewritten Article Content That Failed Verification:
     ----------
     {rewritten_content}
     ----------
     
     This is an automated notification from SimPost.
     """
-    
+
     msg.set_content(email_content)
-    
+
     # Save notification to a file as fallback
     fallback_filename = os.path.join(LOGS_DIR, "email_notifications", f"verification_failure_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
     os.makedirs(os.path.dirname(fallback_filename), exist_ok=True)
@@ -538,10 +537,10 @@ def send_verification_failure_email(feed_name, article_title, article_link, veri
         f.write(f"To: {SYSTEM_ADMIN_EMAIL}\n")
         f.write(f"Subject: {msg['Subject']}\n\n")
         f.write(email_content)
-    
+
     # Try different email sending methods
     sent = False
-    
+
     # Try method 1: Configured SMTP server
     if SMTP_SERVER and SMTP_USERNAME and SMTP_PASSWORD:
         try:
@@ -556,7 +555,7 @@ def send_verification_failure_email(feed_name, article_title, article_link, veri
                 return True
         except Exception as e:
             print(f"⚠️ Failed to send email via configured SMTP: {str(e)}")
-    
+
     # Try method 2: Local mail server
     if not sent:
         try:
@@ -568,7 +567,7 @@ def send_verification_failure_email(feed_name, article_title, article_link, veri
                 return True
         except Exception as e:
             print(f"⚠️ Failed to send email via local server: {str(e)}")
-    
+
     # Final fallback - inform user about the saved notification
     if not sent:
         print(f"📁 Email notification saved to {fallback_filename}")
@@ -577,45 +576,43 @@ def send_verification_failure_email(feed_name, article_title, article_link, veri
 
 # Function to mark article as posted
 def mark_article_as_posted(feed_name, article_id):
+    """Mark the article as posted."""
     file_path = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'), f"{article_id}.json")
-    
+
     if os.path.exists(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         data["is_posted"] = True
         data["posted_at"] = datetime.datetime.now().isoformat()
-        
+
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
 # Function to get rewritten articles that are verified but not posted
 def get_unposted_verified_articles(feed_name):
-    """
-    Get verified but unposted articles for a feed
-    
+    """ Get verified but unposted articles for a feed
     Args:
-        feed_name (str): Name of the feed
-        
+        feed_name (str): Name of the feed        
     Returns:
         list: List of tuples containing (article_id, article_data, rewritten_content, article_link)
     """
     feed_dir = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))
-    
+
     if not os.path.exists(feed_dir):
         return []
-    
+
     unposted_articles = []
-    
+
     for filename in os.listdir(feed_dir):
         if not filename.endswith('.json'):
             continue
-            
+
         filepath = os.path.join(feed_dir, filename)
         with open(filepath, 'r', encoding='utf-8') as f:
             try:
                 data = json.load(f)
-                
+
                 # Check if article is verified but not posted
                 if data.get('is_verified', False) and not data.get('is_posted', False):
                     article_id = data.get('id')
@@ -778,7 +775,10 @@ def main():
             # Rewrite the article
             print(f"📝 Rewriting article: {article['title']}")
             # Use feed-specific system prompt or default to a generic one if not provided
-            system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
+            base_system_prompt = feed.get("system_prompt", "You are a professional social media copywriter specializing in news and current events.")
+            # Add current date and time to the system prompt
+            current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            system_prompt = f"{base_system_prompt} Today's date and time is {current_datetime}."
             rewritten_content = rewrite_article(article, feed["prompt"], system_prompt)
             log_rewritten_article(feed["name"], rewritten_content)
             
@@ -831,16 +831,18 @@ def main():
             else:
                 print(f"❌ NOT VERIFIED: {verification_message}")
                 print("⚠️ Content was not published due to verification failure")
-                
+
                 # Send email notification for verification failure
                 send_verification_failure_email(
-                    feed_name=feed['name'], 
-                    article_title=article['title'], 
-                    article_link=article['link'], 
+                    feed_name=feed['name'],
+                    article_title=article['title'],
+                    article_link=article['link'],
+                    article_pub_date=article['pub_date'],
                     verification_message=verification_message,
-                    rewritten_content=rewritten_content
+                    rewritten_content=rewritten_content,
+                    article_id=article['id']
                 )
-    
+
             print("="*50 + "\n")
         
         # Check for any additional verified but unposted articles
