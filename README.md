@@ -53,6 +53,7 @@ Each Facebook Page requires its own unique Page Access Token. Follow these steps
 10. Copy the generated token to your feeds.json file as page_access_token
 
 **Important:** If you're posting to multiple Facebook Pages, you'll need a separate access token for each page. In your `feeds.json` configuration, specify the different tokens for each feed using the `page_access_token` property.
+     - `FACEBOOK_PAGE_ACCESS_TOKEN`: Your Facebook access token for posting
 
 ### Using the Facebook Token Utility
 
@@ -115,6 +116,7 @@ Edit `feeds.json` to configure your feeds. Each feed has the following propertie
   "page_access_token": "your-page-specific-access-token",
   "max_articles": 10,
   "auto_post": true,
+
   "delay_each_post": 10,
   "system_prompt": "System prompt for the AI model",
   "prompt": "Specific instructions for rewriting articles"
