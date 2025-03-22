@@ -43,3 +43,4 @@ logs/
 
 /test_migration_guide.md
 /testing_recommendations.md
+Dockerfile

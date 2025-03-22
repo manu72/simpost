@@ -577,8 +577,14 @@ def send_verification_failure_email(feed_name, article_title, article_link, arti
 # Function to mark article as posted
 def mark_article_as_posted(feed_name, article_id):
     """Mark the article as posted."""
-    file_path = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'), f"{article_id}.json")
-
+    # Handle both cases: feed_name might already be the directory name (no spaces)
+    # or it might be the original feed name from feeds.json (with spaces)
+    file_path = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name, f"{article_id}.json")
+    
+    # If file doesn't exist with direct feed_name, try with space replacement
+    if not os.path.exists(file_path):
+        file_path = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'), f"{article_id}.json")
+    
     if os.path.exists(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -588,43 +594,57 @@ def mark_article_as_posted(feed_name, article_id):
 
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"📝 Marked article {article_id} as posted in {os.path.dirname(file_path)}")
+    else:
+        print(f"⚠️ Could not find article file to mark as posted: {article_id} in {feed_name}")
 
 # Function to get rewritten articles that are verified but not posted
-def get_unposted_verified_articles(feed_name):
+def get_unposted_verified_articles(feed_name=None):
     """ Get verified but unposted articles for a feed
     Args:
-        feed_name (str): Name of the feed        
+        feed_name (str, optional): Name of the feed. If None, check all feed directories.
     Returns:
-        list: List of tuples containing (article_id, article_data, rewritten_content, article_link)
+        list: List of tuples containing (article_id, article_data, rewritten_content, article_link, article_title, feed_dir_name)
     """
-    feed_dir = os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))
-
-    if not os.path.exists(feed_dir):
-        return []
-
     unposted_articles = []
-
-    for filename in os.listdir(feed_dir):
-        if not filename.endswith('.json'):
+    
+    # If feed_name is provided, only check that specific feed directory
+    if feed_name:
+        feed_dirs = [os.path.join(REWRITTEN_ARTICLES_DIR, feed_name.replace(' ', '_'))]
+    else:
+        # Otherwise, check all directories within REWRITTEN_ARTICLES_DIR
+        feed_dirs = [os.path.join(REWRITTEN_ARTICLES_DIR, d) for d in os.listdir(REWRITTEN_ARTICLES_DIR) 
+                    if os.path.isdir(os.path.join(REWRITTEN_ARTICLES_DIR, d))]
+    
+    for feed_dir in feed_dirs:
+        if not os.path.exists(feed_dir):
             continue
+            
+        feed_dir_name = os.path.basename(feed_dir)
+        print(f"Checking for unposted verified articles in {feed_dir_name}...")
 
-        filepath = os.path.join(feed_dir, filename)
-        with open(filepath, 'r', encoding='utf-8') as f:
-            try:
-                data = json.load(f)
+        for filename in os.listdir(feed_dir):
+            if not filename.endswith('.json'):
+                continue
 
-                # Check if article is verified but not posted
-                if data.get('is_verified', False) and not data.get('is_posted', False):
-                    article_id = data.get('id')
-                    rewritten_content = data.get('rewritten_content')
-                    article_link = data.get('original_article', {}).get('link')
-                    article_title = data.get('original_article', {}).get('title', 'No title')
-                    
-                    if article_id and rewritten_content and article_link:
-                        unposted_articles.append((article_id, data, rewritten_content, article_link, article_title))
+            filepath = os.path.join(feed_dir, filename)
+            with open(filepath, 'r', encoding='utf-8') as f:
+                try:
+                    data = json.load(f)
+
+                    # Check if article is verified but not posted
+                    if data.get('is_verified', False) and not data.get('is_posted', False):
+                        article_id = data.get('id')
+                        rewritten_content = data.get('rewritten_content')
+                        article_link = data.get('original_article', {}).get('link')
+                        article_title = data.get('original_article', {}).get('title', 'No title')
                         
-            except json.JSONDecodeError:
-                print(f"Warning: Could not decode {filepath}")
+                        if article_id and rewritten_content and article_link:
+                            unposted_articles.append((article_id, data, rewritten_content, article_link, article_title, feed_dir_name))
+                            print(f"  Found unposted verified article: {article_title}")
+                            
+                except json.JSONDecodeError:
+                    print(f"Warning: Could not decode {filepath}")
     
     return unposted_articles
 
@@ -764,8 +784,7 @@ def main():
                 else:
                     print(f"⏭️ Skipping article (verified: {is_verified}, posted: {is_posted})")
                 
-            if is_article_processed(feed['name'].replace(' ', '_'), article['id']):
-                print(f"⏭️ Skipping already processed article: {article['title']}")
+                # Skip further processing of this article since it's already processed
                 continue
             
             # Save the retrieved article
@@ -842,29 +861,81 @@ def main():
 
             print("="*50 + "\n")
         
-        # Check for any additional verified but unposted articles
+        # Process individual feed's unposted verified articles
         if feed.get("facebook_page_id") and feed.get("auto_post", True):
-            unposted_articles = get_unposted_verified_articles(feed['name'])
-            if unposted_articles:
-                print(f"\n📋 Found {len(unposted_articles)} verified but unposted articles for {feed['name']}")
+            feed_unposted_articles = get_unposted_verified_articles(feed['name'])
+            if feed_unposted_articles:
+                print(f"\n📋 Found {len(feed_unposted_articles)} verified but unposted articles for {feed['name']}")
                 
-                for article_id, data, rewritten_content, article_link, article_title in unposted_articles:
+                for article_id, data, rewritten_content, article_link, article_title, feed_dir_name in feed_unposted_articles:
                     print(f"🔄 Posting previously verified article: {article_title}")
                     
                     if post_to_facebook(rewritten_content, article_link, feed["facebook_page_id"], feed.get("page_access_token")):
                         # Mark the article as posted
-                        mark_article_as_posted(feed['name'].replace(' ', '_'), article_id)
+                        mark_article_as_posted(feed_dir_name, article_id)
                         print(f"✅ Successfully posted previously verified article (ID: {article_id})")
                     else:
                         print(f"❌ Failed to post previously verified article (ID: {article_id})")
                     
                     # Add delay between posts if specified
                     post_delay = feed.get("delay_each_post", 10)  # Default 10 seconds
-                    if post_delay > 0 and article_id != unposted_articles[-1][0]:  # Don't delay after the last article
+                    if post_delay > 0 and article_id != feed_unposted_articles[-1][0]:  # Don't delay after the last article
                         print(f"⏱️ Waiting {post_delay} seconds before next post...")
                         time.sleep(post_delay)
                         
                 print("="*50 + "\n")
+    
+    # After processing all feeds, check ALL directories for any remaining unposted verified articles
+    # This handles orphaned articles or articles in misnamed directories
+    print("\n🔍 Checking ALL folders for any remaining verified but unposted articles...")
+    all_unposted_articles = get_unposted_verified_articles()  # No feed_name means check all directories
+    
+    if all_unposted_articles:
+        print(f"\n⚠️ Found {len(all_unposted_articles)} additional verified but unposted articles across all folders")
+        
+        # Group articles by feed directory
+        articles_by_feed = {}
+        for article in all_unposted_articles:
+            feed_dir_name = article[5]  # This is the feed_dir_name (6th item in tuple)
+            if feed_dir_name not in articles_by_feed:
+                articles_by_feed[feed_dir_name] = []
+            articles_by_feed[feed_dir_name].append(article)
+        
+        # Find matching Facebook page ID for each feed directory
+        for feed_dir_name, articles in articles_by_feed.items():
+            # Try to find corresponding feed in feeds.json
+            matching_feed = None
+            for feed in feeds:
+                if feed['name'].replace(' ', '_') == feed_dir_name:
+                    matching_feed = feed
+                    break
+            
+            if matching_feed and matching_feed.get("facebook_page_id") and matching_feed.get("auto_post", True):
+                print(f"\n📋 Posting {len(articles)} articles from {feed_dir_name}")
+                
+                for article_id, data, rewritten_content, article_link, article_title, _ in articles:
+                    print(f"🔄 Posting previously verified article: {article_title}")
+                    
+                    if post_to_facebook(rewritten_content, article_link, matching_feed["facebook_page_id"], matching_feed.get("page_access_token")):
+                        # Mark the article as posted
+                        mark_article_as_posted(feed_dir_name, article_id)
+                        print(f"✅ Successfully posted previously verified article (ID: {article_id})")
+                    else:
+                        print(f"❌ Failed to post previously verified article (ID: {article_id})")
+                    
+                    # Add delay between posts
+                    post_delay = matching_feed.get("delay_each_post", 10)  # Default 10 seconds
+                    if post_delay > 0 and article != articles[-1]:  # Don't delay after the last article
+                        print(f"⏱️ Waiting {post_delay} seconds before next post...")
+                        time.sleep(post_delay)
+            else:
+                # If no matching feed in feeds.json, report the orphaned articles
+                print(f"\n⚠️ Found {len(articles)} verified articles in {feed_dir_name}, but no matching feed configuration")
+                print(f"   These articles cannot be posted without a matching Facebook page ID")
+                for _, _, _, _, article_title, _ in articles:
+                    print(f"   - {article_title}")
+        
+        print("="*50 + "\n")
 
 # Main script to process all feeds
 if __name__ == "__main__":
