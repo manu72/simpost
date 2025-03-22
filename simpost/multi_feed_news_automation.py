@@ -21,10 +21,10 @@ import requests
 from openai import OpenAI
 from dotenv import load_dotenv
 
-MODEL = "chatgpt-4o-latest"
-
+# MODEL = "chatgpt-4o-latest"
+MODEL = "gpt-4o-mini"
 # Maximum age of posts to process (in hours)
-IGNORE_POSTS_OLDER_THAN = 12
+IGNORE_POSTS_OLDER_THAN = 2
 
 # Load API keys from .env file
 load_dotenv()
@@ -52,11 +52,51 @@ with open("feeds.json", "r") as file:
     feeds = json.load(file)
 
 # Function to create a unique ID for an article
-def create_article_id(title, link):
-    """Create a unique ID for an article."""
-    # Add date prefix in YYYYMMDD_ format
-    date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
-    unique_string = f"{title}|{link}"
+def create_article_id(title, link, pub_date=None):
+    """Create a unique ID for an article.
+    
+    Args:
+        title (str): The article title (not used for uniqueness)
+        link (str): The article link (used for uniqueness)
+        pub_date (str, optional): The publication date. If None, uses current date.
+    
+    Returns:
+        str: A unique ID in format YYYYMMDD_md5hash
+    """
+    # Parse pub_date to get date prefix in YYYYMMDD_ format
+    if pub_date:
+        try:
+            # Try common date formats
+            parsed_date = None
+            for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"]:
+                try:
+                    parsed_date = datetime.datetime.strptime(pub_date, fmt)
+                    break
+                except (ValueError, TypeError):
+                    continue
+            
+            # If standard formats fail, try ISO format without timezone
+            if not parsed_date:
+                try:
+                    parsed_date = datetime.datetime.fromisoformat(pub_date.replace('Z', ''))
+                except (ValueError, AttributeError):
+                    parsed_date = None
+            
+            # If we successfully parsed the date, use it
+            if parsed_date:
+                date_prefix = parsed_date.strftime("%Y%m%d_")
+            else:
+                # Fallback to current date if parsing fails
+                date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
+        except Exception:
+            # Any error, fall back to current date
+            date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
+    else:
+        # No pub_date provided, use current date
+        date_prefix = datetime.datetime.now().strftime("%Y%m%d_")
+    
+    # Use only the link for uniqueness
+    unique_string = link
     return date_prefix + hashlib.md5(unique_string.encode()).hexdigest()
 
 # Function to check if article has already been processed
@@ -182,7 +222,7 @@ def parse_article_item(item, namespaces):
     }
 
     # Create a unique ID for the article
-    article_id = create_article_id(title, link)
+    article_id = create_article_id(title, link, pub_date)
     article["id"] = article_id
 
     return article
